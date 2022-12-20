@@ -313,22 +313,19 @@
     <ImageButton
         android:id="@+id/status_reply"
         style="@style/TuskyImageButton"
-        android:layout_width="52dp"
-        android:layout_height="48dp"
-        android:layout_marginStart="-14dp"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="4dp"
         android:contentDescription="@string/action_reply"
         android:importantForAccessibility="no"
-        android:padding="6dp"
-        android:adjustViewBounds="true"
-        android:scaleType="fitCenter"
-        app:tint="@color/tusky_grey_50"
+        android:padding="4dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toStartOf="@id/status_inset"
         app:layout_constraintHorizontal_chainStyle="spread_inside"
         app:layout_constraintStart_toStartOf="@id/status_display_name"
         app:layout_constraintTop_toBottomOf="@id/status_poll_description"
-        app:srcCompat="@drawable/ic_reply_24dp"
-        />
+        app:srcCompat="@drawable/ic_reply_24dp" />
 
     <TextView
         android:id="@+id/status_replies"
