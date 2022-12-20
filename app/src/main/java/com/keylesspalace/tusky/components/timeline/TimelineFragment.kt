@@ -42,6 +42,7 @@ import com.keylesspalace.tusky.adapter.StatusBaseViewHolder
 import com.keylesspalace.tusky.appstore.EventHub
 import com.keylesspalace.tusky.appstore.PreferenceChangedEvent
 import com.keylesspalace.tusky.appstore.StatusComposedEvent
+import com.keylesspalace.tusky.components.preference.PreferencesFragment.ReadingOrder
 import com.keylesspalace.tusky.components.timeline.viewmodel.CachedTimelineViewModel
 import com.keylesspalace.tusky.components.timeline.viewmodel.NetworkTimelineViewModel
 import com.keylesspalace.tusky.components.timeline.viewmodel.TimelineViewModel
@@ -62,6 +63,7 @@ import com.keylesspalace.tusky.util.hide
 import com.keylesspalace.tusky.util.show
 import com.keylesspalace.tusky.util.viewBinding
 import com.keylesspalace.tusky.viewdata.AttachmentViewData
+import com.keylesspalace.tusky.viewdata.StatusViewData
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.core.Observable
 import kotlinx.coroutines.flow.collectLatest
@@ -101,6 +103,35 @@ class TimelineFragment :
     private var isSwipeToRefreshEnabled = true
     private var hideFab = false
 
+    /** Adapter position of the placeholder that was most recently clicked to "Load more" */
+    private var loadMorePosition: Int? = null
+
+    /** ID of the status immediately below the most recent "Load more" placeholder click */
+    // The Paging library assumes that the user will be scrolling down a list of items,
+    // and if new items are loaded but not visible then it's reasonable to scroll to the top
+    // of the inserted items. It does not seem to be possible to disable that behaviour.
+    //
+    // That behaviour should depend on the user's preferred reading order. If they prefer to
+    // read oldest first then the list should be scrolled to the bottom of the freshly
+    // inserted statuses.
+    //
+    // To do this:
+    //
+    // 1. When "Load more" is clicked (onLoadMore()):
+    //    a. Remember the adapter position of the "Load more" item in loadMorePosition
+    //    b. Remember the ID of the status immediately below the "Load more" item in
+    //       statusIdBelowLoadMore
+    // 2. After the new items have been inserted, search the adapter for the position of the
+    //    status with id == statusIdBelowLoadMore.
+    // 3. If this position is still visible on screen then do nothing, otherwise, scroll the view
+    //    so that the status is visible.
+    //
+    // The user can then scroll up to read the new statuses.
+    private var statusIdBelowLoadMore: String? = null
+
+    /** The user's preferred reading order */
+    private lateinit var readingOrder: ReadingOrder
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -130,6 +161,8 @@ class TimelineFragment :
         isSwipeToRefreshEnabled = arguments.getBoolean(ARG_ENABLE_SWIPE_TO_REFRESH, true)
 
         val preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
+        readingOrder = ReadingOrder.from(preferences.getString(PrefKeys.READING_ORDER, "oldest_first")!!)
+
         val statusDisplayOptions = StatusDisplayOptions(
             animateAvatars = preferences.getBoolean(PrefKeys.ANIMATE_GIF_AVATARS, false),
             mediaPreviewEnabled = accountManager.activeAccount!!.mediaPreviewEnabled,
@@ -201,11 +234,38 @@ class TimelineFragment :
                 if (positionStart == 0 && adapter.itemCount != itemCount) {
                     binding.recyclerView.post {
                         if (getView() != null) {
-                            if (isSwipeToRefreshEnabled) {
+                            // Swiping and prefer oldest-first? Stay at the same position.
+                            // Otherwise jump to the top.
+                            if (isSwipeToRefreshEnabled && readingOrder == ReadingOrder.OLDEST_FIRST) {
                                 binding.recyclerView.scrollBy(0, Utils.dpToPx(requireContext(), -30))
                             } else binding.recyclerView.scrollToPosition(0)
                         }
                     }
+                }
+
+                // If this insert was because the user clicked "Load more" then ensure the status
+                // below that "Load more" placeholder is still visible (if the user reads oldest
+                // to newest).
+                //
+                // Note: The positionStart parameter to onItemRangeInserted() does not always
+                // match the adapter position where data was inserted (which is why loadMorePosition
+                // is tracked manually, see this bug report for another example:
+                // https://github.com/android/architecture-components-samples/issues/726).
+                if (loadMorePosition != null && statusIdBelowLoadMore != null && readingOrder == ReadingOrder.OLDEST_FIRST) {
+                    var position = loadMorePosition!!
+
+                    var status: StatusViewData?
+                    while (adapter.peek(position).let { status = it; it != null }) {
+                        if (status?.id == statusIdBelowLoadMore) {
+                            val lastVisiblePosition = (binding.recyclerView.layoutManager as LinearLayoutManager).findLastVisibleItemPosition()
+                            if (position > lastVisiblePosition) {
+                                binding.recyclerView.scrollToPosition(position)
+                            }
+                            break
+                        }
+                        position++
+                    }
+                    loadMorePosition = null
                 }
             }
         })
@@ -344,6 +404,8 @@ class TimelineFragment :
 
     override fun onLoadMore(position: Int) {
         val placeholder = adapter.peek(position)?.asPlaceholderOrNull() ?: return
+        loadMorePosition = position
+        statusIdBelowLoadMore = adapter.peek(position + 1)?.id
         viewModel.loadMore(placeholder.id)
     }
 
@@ -403,6 +465,11 @@ class TimelineFragment :
                     adapter.mediaPreviewEnabled = enabled
                     adapter.notifyItemRangeChanged(0, adapter.itemCount)
                 }
+            }
+            PrefKeys.READING_ORDER -> {
+                readingOrder = ReadingOrder.from(
+                    sharedPreferences.getString(PrefKeys.READING_ORDER, "oldest_first")!!
+                )
             }
         }
     }
